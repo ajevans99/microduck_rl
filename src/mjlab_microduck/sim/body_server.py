@@ -30,10 +30,12 @@ for TCP-not-a-unix-socket and JSON-not-a-packed-struct.
 
 ## Two mappings this side owns, on purpose
 
-**Fifteen joints out here, fourteen in the model.** The daemon indexes joints as `JOINT_NAMES`,
-which includes `mouth` at index 9; no alpha policy drives it and the walking model does not have it.
-The daemon must not learn that, so this inserts and drops it. Where the knowledge about a model's
-own shape lives is the whole reason the protocol carries the robot's units rather than MuJoCo's.
+**Fifteen joints on the wire, hinged mouth injected here.** The daemon indexes joints as
+`JOINT_NAMES`, which includes `mouth` at index 9; no RL policy drives it and the Onshape-exported
+`robot_*.xml` models keep the lower jaw rigidly merged into the head so training stays 14-DOF.
+`build_world` splits the jaw geoms into an actuated hinged `mouth` joint on the `MjSpec` before
+compiling, so `robot.mouth` commands physically open and close the lower beak while RL models and
+scene keyframes stay untouched (and models without jaw geometry still work by dropping index 9).
 
 **Gravity, not just orientation.** The policy observes projected gravity in the trunk frame. MuJoCo
 gives an orientation quaternion, so this does the rotation — the same arithmetic the IMU's SFLP
@@ -54,6 +56,7 @@ import numpy as np
 
 from mjlab_microduck.sim.camera import FPS as CAMERA_FPS
 from mjlab_microduck.sim.camera import Camera, FrameHandler, FrameServer
+from mjlab_microduck.sim.mouth import add_hinged_mouth
 from mjlab_microduck.sim.tof import COLS, ROWS, Tof
 
 PROTOCOL = 1
@@ -117,14 +120,13 @@ def build_world(scene: Path, count: int) -> mujoco.MjModel:
     ducks in separate physics can be beside each other on a screen and never touch, and "beside each
     other" is what every social behaviour is about.
     """
-    if count == 1:
-        return mujoco.MjModel.from_xml_path(str(scene))
-
     spec = mujoco.MjSpec.from_file(str(scene))
+    add_hinged_mouth(spec)
     for index in range(1, count):
         # A fresh child every time: `attach` renames the spec it is given, so reusing one gives the
         # third duck names like `d2_d1_left_hip_yaw` and a compile error about incompatible ids.
         robot = mujoco.MjSpec.from_file(str(ROBOT_ONLY))
+        add_hinged_mouth(robot)
         frame = spec.worldbody.add_frame(pos=[0.0, index * SPACING, 0.0])
         spec.attach(robot, prefix=duck_prefix(index), frame=frame)
     return spec.compile()
